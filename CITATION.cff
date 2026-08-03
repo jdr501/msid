@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "msid: Markov-Switching Statistical Identification for Structural VAR/VECM Models"
+type: software
+version: 0.1.0
+date-released: 2026-08-02
+license: MIT
+repository-code: "https://github.com/jdr501/msid"
+authors:
+  - family-names: Rajapaksa
+    given-names: Danusha
+    email: danusha.rajapaksa@gmail.com
+    affiliation: "University of Saskatchewan"
+keywords:
+  - structural VAR
+  - SVECM
+  - Markov switching
+  - identification through heteroskedasticity
+  - econometrics
+preferred-citation:
+  type: unpublished
+  title: "The Microstructure of Stablecoin Stability: Evidence from Tether"
+  year: 2026
+  authors:
+    - family-names: Rajapaksa
+      given-names: Danusha
+    - family-names: Shao
+      given-names: Enchuan

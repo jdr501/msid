@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "msid"
+version = "0.1.0"
+description = "Markov-Switching Statistical Identification for Structural VAR/VECM models (Herwartz & Lutkepohl 2014; Rajapaksa & Shao 2026)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Danusha Rajapaksa" }]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "autograd>=1.6",
+    "joblib>=1.3",
+    "statsmodels>=0.14",
+]
+
+[project.optional-dependencies]
+jax = ["jax>=0.4"]
+dev = ["pytest>=7", "ruff", "black"]
+
+[tool.setuptools.packages.find]
+include = ["msid*"]
+
+[tool.setuptools.package-data]
+"msid.datasets" = ["*.csv"]
+
+[tool.pytest.ini_options]
+markers = ["slow: long-running replication benchmarks (deselect with '-m \"not slow\"')"]
+testpaths = ["msid/tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.black]
+line-length = 100

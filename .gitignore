@@ -1,0 +1,25 @@
+# local environments and caches
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# OS noise
+.DS_Store
+
+# reference papers (copyrighted; not for redistribution)
+Papers */
+Papers/
+
+# internal development documents
+msid_handoff_spec.md
+
+# non-redistributable replication data
+*tether*.csv
+
+# local scrap — never commit
+trash/
