@@ -60,6 +60,34 @@ irf.plot()
 res.plot_regimes(series=y.columns[0], threshold=0.7)
 ```
 
+### Shock ordering
+
+B is identified only up to column permutation and sign, so the order in
+which shocks come out of the optimizer is arbitrary. Two conventions are
+available for fixing it (plus explicit permutations):
+
+```python
+# Cholesky-style: shock j = the shock of variable j (assignment by
+# scale-normalized impact shares; warns if the matching is ambiguous)
+res = model.fit(n_starts=50, random_state=0, shock_order="variables")
+
+# HL volatility labeling: sort shocks by their regime-2 relative
+# variance lambda_2j, largest first
+res = model.fit(n_starts=50, random_state=0, shock_order="lambda_desc")
+
+# or reorder after the fact
+res.order_shocks_by_variables()      # same as shock_order="variables"
+res.sort_shocks(regime=2)            # same as "lambda_desc"
+res.reorder_shocks([1, 2, 0])        # any explicit permutation
+```
+
+`"variables"` matches how conventional-SVAR readers expect shocks to be
+labeled and is the natural display convention; `"lambda_desc"` is
+regime-based and useful as a robustness/diagnostic device. Both are only
+as credible as the statistics behind them — check the identification block
+in `summary()` (distinct λ's) and heed the ambiguity warning. See
+`THEORY.md`, Section 5.
+
 ## What's in the box
 
 | Area | Where |

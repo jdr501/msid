@@ -110,6 +110,7 @@ class _MSBase(ABC):
         lambda_range: tuple[float, float] = (0.1, 10.0),
         label_order: str = "lambda_sort",
         struct_maxiter: int = 200,
+        shock_order=None,
         n_jobs: int = -1,
         random_state=None,
     ):
@@ -121,6 +122,15 @@ class _MSBase(ABC):
         ``results.loglik_starts_``; the EM path of the winning start is in
         ``results.loglik_history_``.  ``struct_maxiter`` caps the inner
         L-BFGS iterations of each structural M-step.
+
+        ``shock_order`` fixes the (otherwise arbitrary) column permutation
+        of B after estimation: ``"variables"`` matches each shock to the
+        variable it impacts most (scale-normalized Hungarian assignment;
+        Cholesky-style labels, warns when ambiguous), ``"lambda_desc"`` /
+        ``"lambda_asc"`` sort shocks by their regime-2 relative variance
+        (HL's volatility labeling; largest first / smallest first), an
+        explicit permutation like ``[1, 2, 0]`` applies that order, and
+        ``None`` (default) keeps the optimizer's arrangement.
         """
         from .results import _make_results
 
@@ -150,7 +160,23 @@ class _MSBase(ABC):
         best, logliks = em_estimate(
             DY, Z, R, self.M, starts, config, C_longrun=C_map, n_jobs=n_jobs
         )
-        return _make_results(self, best, R, DY, Z, index, logliks, config)
+        res = _make_results(self, best, R, DY, Z, index, logliks, config)
+        if shock_order is not None:
+            if shock_order == "variables":
+                res.order_shocks_by_variables()
+            elif shock_order == "lambda_desc":
+                res.sort_shocks(regime=2, ascending=False)
+            elif shock_order == "lambda_asc":
+                res.sort_shocks(regime=2, ascending=True)
+            elif isinstance(shock_order, str):
+                raise ValueError(
+                    "shock_order must be 'variables', 'lambda_desc', "
+                    f"'lambda_asc', a permutation of 0..{self.K - 1}, or "
+                    f"None; got {shock_order!r}"
+                )
+            else:
+                res.reorder_shocks(shock_order)
+        return res
 
     @classmethod
     def from_pickle(cls, path: str):

@@ -207,6 +207,103 @@ class _ResultsBase:
 
         return rolling_stability(self, window=window, lags=lags)
 
+    # ------------------------------------------------- shock ordering
+    def reorder_shocks(self, order):
+        """Permute the structural shock columns in place and return self.
+
+        B is identified only up to column permutation and sign (HL 2014,
+        Sec. 3.1), so any permutation of the shock columns describes the
+        same model; this method applies one consistently across ``B_``,
+        ``Lambda_``, ``structural_shocks_`` and cached standard errors.
+
+        Parameters
+        ----------
+        order : sequence of int
+            ``order[j]`` is the (0-indexed) current column to place at new
+            position j, e.g. ``[1, 2, 0]``.
+        """
+        order = list(order)
+        if sorted(order) != list(range(self.K)):
+            raise ValueError(f"order must be a permutation of 0..{self.K - 1}, got {order}")
+        R = self.restrictions
+        if R.n_zero_restrictions or R.sign_restrictions:
+            warnings.warn(
+                "reordering shocks of a restricted model: the positions in "
+                "the Restrictions object no longer match the new column "
+                "order; interpret restricted positions with care",
+                UserWarning,
+            )
+        self.B_ = self.B_[:, order]
+        self.Lambda_ = [np.asarray(lam)[order] for lam in self.Lambda_]
+        eps = self.structural_shocks_.to_numpy()[:, order]
+        self.structural_shocks_ = pd.DataFrame(
+            eps, index=self.structural_shocks_.index,
+            columns=[f"eps{j + 1}" for j in range(self.K)],
+        )
+        if self._se is not None:
+            se = self._se
+            se.se_B = se.se_B[:, order]
+            se.se_lambda = [s[order] for s in se.se_lambda]
+            perm_full = [m * self.K + j for m in range(self.M - 1) for j in order]
+            se.V_lambda = se.V_lambda[np.ix_(perm_full, perm_full)]
+        self._ident = None  # H0 labels are index-based; recompute on demand
+        return self
+
+    def sort_shocks(self, regime: int = 2, ascending: bool = False):
+        """Order shocks by their relative variance in ``regime`` (HL's
+        volatility-labeling device).
+
+        With ``ascending=False`` (default), shock 1 becomes the one with the
+        largest lambda in the chosen regime.  Only meaningful when the
+        lambdas are statistically distinct -- check the identification block
+        of ``summary()`` first.
+        """
+        if not 2 <= regime <= self.M:
+            raise ValueError(f"regime must be in 2..{self.M}")
+        lam = np.asarray(self.Lambda_[regime - 1])
+        order = np.argsort(lam, kind="stable")
+        if not ascending:
+            order = order[::-1]
+        return self.reorder_shocks(order.tolist())
+
+    def order_shocks_by_variables(self, warn_margin: float = 0.1):
+        """Match each shock column to "its" variable (Cholesky-style labels).
+
+        Assigns the columns of B to variables by maximizing the total
+        scale-normalized impact share (Hungarian assignment), so that after
+        reordering, shock j is the one whose impact falls mainly on
+        variable j -- the ordering convention readers of conventional SVARs
+        expect.  Impacts are normalized by each variable's residual
+        standard deviation, making the assignment unit-free.
+
+        Only meaningful when B is roughly diagonal-dominant after
+        normalization, i.e. each statistical shock loads mainly on one
+        distinct variable.  When the assignment is ambiguous (the assigned
+        variable's impact share exceeds the best alternative by less than
+        ``warn_margin``), a warning is raised: the statistical shocks are
+        then likely mixtures and variable labels should not be trusted --
+        prefer ``sort_shocks`` (lambda-magnitude ordering) or explicit
+        restrictions in that case.
+        """
+        from scipy.optimize import linear_sum_assignment
+
+        sd = self.residuals_.std(axis=0).to_numpy()
+        Bn = np.abs(self.B_) / np.maximum(sd[:, None], 1e-300)
+        share = Bn**2 / np.maximum((Bn**2).sum(axis=0, keepdims=True), 1e-300)
+        rows, cols = linear_sum_assignment(-share)
+        for i, j in zip(rows, cols):
+            margin = share[i, j] - np.delete(share[:, j], i).max()
+            if margin < warn_margin:
+                warnings.warn(
+                    f"ambiguous shock-to-variable assignment: column {j} is "
+                    f"matched to variable '{self.residuals_.columns[i]}' by a "
+                    f"margin of only {margin:.3f} in impact share; the shock "
+                    "may be a mixture -- consider lambda-based ordering or "
+                    "explicit restrictions instead",
+                    UserWarning,
+                )
+        return self.reorder_shocks(cols.tolist())
+
     def plot_convergence(self, log_scale: bool = True, figsize=(9, 4)):
         """EM convergence diagnostics for the winning start.
 

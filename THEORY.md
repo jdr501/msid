@@ -125,6 +125,43 @@ The states of a Markov mixture are exchangeable; two rules pin them down:
 Column signs of B are normalized by the user's sign restrictions when
 present, else to a positive diagonal.
 
+### Shock (column) ordering
+
+Distinct from *state* labels, the **columns of B** — the shocks — are also
+only identified up to permutation: nothing in the likelihood ties column j
+to variable j. The estimator therefore keeps whatever arrangement the
+optimizer converged to (`shock_order=None`), and two explicit conventions
+are offered for pinning it down:
+
+- **`shock_order="variables"`** — Cholesky-style labels. Each column is
+  assigned to the variable it impacts most on impact, using impact *shares*
+  normalized by each variable's residual standard deviation (so the
+  assignment is unit-free) and a Hungarian best-assignment across columns.
+  After reordering, "shock j" is the shock of variable j, which is the
+  convention readers of conventional SVARs expect and the one used in the
+  Tether paper's Figure 7. This is only meaningful when normalized B is
+  roughly diagonal-dominant — each statistical shock loading mainly on one
+  distinct variable. When the winning assignment beats the best alternative
+  by a thin margin (< 0.1 in impact share by default), a warning is raised:
+  the statistical shocks are then likely mixtures of economic shocks and
+  variable labels should not be trusted (HL Sec. 3.1's caution).
+- **`shock_order="lambda_desc"` / `"lambda_asc"`** — HL's volatility
+  labeling. Shocks are sorted by their relative variance λ_2j in regime 2
+  (largest or smallest first). This never suffers from assignment
+  ambiguity, because it sorts on an identified scalar per shock — but the
+  resulting order is regime-specific and carries no variable meaning by
+  itself; it is most useful as a robustness/diagnostic device, and only
+  credible when the λ's are statistically distinct (check the
+  identification block first).
+
+An explicit permutation (e.g. `shock_order=[1, 2, 0]`) is also accepted,
+and the same operations are available post-fit as
+`results.order_shocks_by_variables()`, `results.sort_shocks()` and
+`results.reorder_shocks()`. All of them permute B's columns, the λ's, the
+structural shocks and cached standard errors consistently; the Σ_m are
+invariant by construction. On a restricted fit, note that positions in the
+`Restrictions` object refer to the original column order.
+
 ## 6. Why Λ and P are held fixed in the bootstrap
 
 The IRF bootstrap (fixed-design wild bootstrap, Rademacher weights; HL
