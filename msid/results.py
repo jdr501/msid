@@ -247,6 +247,31 @@ class _ResultsBase:
             perm_full = [m * self.K + j for m in range(self.M - 1) for j in order]
             se.V_lambda = se.V_lambda[np.ix_(perm_full, perm_full)]
         self._ident = None  # H0 labels are index-based; recompute on demand
+        if not R.sign_restrictions:
+            self.normalize_own_signs()
+        return self
+
+    def normalize_own_signs(self):
+        """Flip shock columns so every own-impact ``B[j, j]`` is positive.
+
+        Makes "a one-standard-deviation shock j" mean a shock that *raises*
+        variable j on impact.  Flipping a column of B and the corresponding
+        structural-shock series together leaves the model observationally
+        unchanged (HL 2014, Sec. 3.1); Sigma_m, lambdas and standard errors
+        are unaffected.  Called automatically after ``reorder_shocks`` unless
+        explicit sign restrictions govern the columns.
+        """
+        flips = np.ones(self.K)
+        for j in range(self.K):
+            if self.B_[j, j] < 0:
+                flips[j] = -1.0
+        if (flips < 0).any():
+            self.B_ = self.B_ * flips[None, :]
+            eps = self.structural_shocks_.to_numpy() * flips[None, :]
+            self.structural_shocks_ = pd.DataFrame(
+                eps, index=self.structural_shocks_.index,
+                columns=self.structural_shocks_.columns,
+            )
         return self
 
     def sort_shocks(self, regime: int = 2, ascending: bool = False):
