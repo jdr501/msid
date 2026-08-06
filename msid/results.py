@@ -237,7 +237,8 @@ class _ResultsBase:
         self.Lambda_ = [np.asarray(lam)[order] for lam in self.Lambda_]
         eps = self.structural_shocks_.to_numpy()[:, order]
         self.structural_shocks_ = pd.DataFrame(
-            eps, index=self.structural_shocks_.index,
+            eps,
+            index=self.structural_shocks_.index,
             columns=[f"eps{j + 1}" for j in range(self.K)],
         )
         if self._se is not None:
@@ -269,7 +270,8 @@ class _ResultsBase:
             self.B_ = self.B_ * flips[None, :]
             eps = self.structural_shocks_.to_numpy() * flips[None, :]
             self.structural_shocks_ = pd.DataFrame(
-                eps, index=self.structural_shocks_.index,
+                eps,
+                index=self.structural_shocks_.index,
                 columns=self.structural_shocks_.columns,
             )
         return self
@@ -345,13 +347,14 @@ class _ResultsBase:
         ax1.plot(np.arange(1, ll.size + 1), ll, color="black", lw=1.2)
         finite = self.loglik_starts_[np.isfinite(self.loglik_starts_)]
         if finite.size:
-            ax1.axhline(finite.max(), color="tab:blue", ls="--", lw=0.8,
-                        label="best start")
+            ax1.axhline(finite.max(), color="tab:blue", ls="--", lw=0.8, label="best start")
             ax1.legend(fontsize=8)
         ax1.set_xlabel("EM iteration")
         ax1.set_ylabel("log-likelihood")
-        ax1.set_title(f"EM path ({'converged' if self.converged_ else 'NOT converged'}"
-                      f" in {self.n_iter_} iterations)")
+        ax1.set_title(
+            f"EM path ({'converged' if self.converged_ else 'NOT converged'}"
+            f" in {self.n_iter_} iterations)"
+        )
         gain = np.diff(ll)
         ax2.plot(np.arange(2, ll.size + 1), np.maximum(gain, 0.0), color="black", lw=1.0)
         if log_scale:
