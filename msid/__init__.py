@@ -16,6 +16,7 @@ Quick start
 
 from .datasets import load_example, load_tether
 from .inference.lr_tests import compare_models, model_table
+from .labeling import LabelingReport, max_own_impact_order
 from .model import MSVAR, MSVECM
 from .pretest import arch_lm, johansen, justify_ms, select_lags
 from .restrictions import Restrictions
@@ -25,6 +26,7 @@ __version__ = "0.1.0"
 __all__ = [
     "MSVAR",
     "MSVECM",
+    "LabelingReport",
     "Restrictions",
     "__version__",
     "arch_lm",
@@ -33,6 +35,7 @@ __all__ = [
     "justify_ms",
     "load_example",
     "load_tether",
+    "max_own_impact_order",
     "model_table",
     "select_lags",
 ]

@@ -13,6 +13,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from .labeling import DEFAULT_MIN_GAP
 from .restrictions import Restrictions
 
 __all__ = ["MSVARResults", "MSVECMResults"]
@@ -63,6 +64,7 @@ class _ResultsBase:
         )
         self._se = None
         self._ident = None
+        self.labeling_report_ = None
 
     # ------------------------------------------------------------ lazy SEs
     @property
@@ -248,6 +250,7 @@ class _ResultsBase:
             perm_full = [m * self.K + j for m in range(self.M - 1) for j in order]
             se.V_lambda = se.V_lambda[np.ix_(perm_full, perm_full)]
         self._ident = None  # H0 labels are index-based; recompute on demand
+        self.labeling_report_ = None  # any stored labeling is stale after a reorder
         if not R.sign_restrictions:
             self.normalize_own_signs()
         return self
@@ -330,6 +333,52 @@ class _ResultsBase:
                     UserWarning,
                 )
         return self.reorder_shocks(cols.tolist())
+
+    def order_shocks_by_max_own_impact(
+        self, min_gap: float = DEFAULT_MIN_GAP, strict: bool = False
+    ):
+        """Label shocks by the max own-impact rule, keeping the diagnostics.
+
+        Applies the pre-specified labeling rule of :mod:`msid.labeling`:
+        standardize each element of B by the scale of its variable, score
+        every assignment of shocks to variables by total own-variable
+        impact, take the maximizing assignment, and orient signs so every
+        own impact is positive.
+
+        Unlike :meth:`order_shocks_by_variables`, which selects the same
+        permutation but reports nothing, this records the full assignment
+        ranking in ``results.labeling_report_`` -- best and second-best
+        scores, their gap against the declared ``min_gap`` threshold, and
+        the per-variable own-impact shares -- and ``summary()`` prints it.
+
+        Every likelihood-ratio statistic is invariant to the column
+        permutation, so applying this rule cannot change a restriction
+        test.  What it fixes is which economic claim those tests support,
+        and which element gets reported as ``b_ij``.  Label first, test
+        after.
+
+        Parameters
+        ----------
+        min_gap : float
+            Declared threshold on the best-minus-second-best gap in total
+            own-variable impact.  Warns when the realized gap is smaller.
+        strict : bool
+            Raise ``ValueError`` instead of warning on an ambiguous
+            labeling -- for pipelines that must not silently emit
+            variable-labeled output.
+        """
+        from .labeling import max_own_impact_order
+
+        report = max_own_impact_order(
+            self.B_,
+            self.residuals_.std(axis=0).to_numpy(),
+            min_gap=min_gap,
+            strict=strict,
+            var_names=list(self.residuals_.columns),
+        )
+        self.reorder_shocks(report.order)
+        self.labeling_report_ = report
+        return self
 
     def plot_convergence(self, log_scale: bool = True, figsize=(9, 4)):
         """EM convergence diagnostics for the winning start.
@@ -420,6 +469,9 @@ class _ResultsBase:
         if se is not None and se.boundary:
             lines.append(f"Parameters at boundary (SE = na): {', '.join(se.boundary)}")
         lines.append("-" * 72)
+        if self.labeling_report_ is not None:
+            lines.append(str(self.labeling_report_))
+            lines.append("-" * 72)
         if se is not None:
             try:
                 ident = self.identification_

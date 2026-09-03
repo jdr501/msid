@@ -133,7 +133,44 @@ to variable j. The estimator therefore keeps whatever arrangement the
 optimizer converged to (`shock_order=None`), and two explicit conventions
 are offered for pinning it down:
 
-- **`shock_order="variables"`** — Cholesky-style labels. Each column is
+- **`shock_order="max_own_impact"`** — the pre-specified labeling rule
+  (`msid.labeling`), and the recommended choice. Standardize each element
+  of B by the scale of its variable, `A_ij = |B_ij| / σ_i`; convert to
+  impact shares `S_ij = A_ij² / Σ_k A_kj²`, so column j reports where
+  shock j's impact lands; score every assignment c of shocks to variables
+  by the *total own-variable impact* `Q(c) = Σ_i S[i, c(i)]`; take
+  `argmax Q`; then orient signs so every own impact `B_jj > 0`. All K!
+  assignments are enumerated for K ≤ 7 (Hungarian assignment plus
+  forced-exclusion re-solves above that, giving the same optimum and an
+  exact runner-up). `Q` runs from about 1 — each shock spread evenly over
+  the variables, no variable-specific structure at all — to K, a perfect
+  one-to-one match, so the gap between the best and second-best assignment
+  says directly how sharply the labels are determined. It is reported in
+  `results.labeling_report_` and printed by `summary()`, together with the
+  full ranking and the per-variable own shares.
+
+  A rule needs a declared failure branch. When the gap falls below
+  `min_gap` the labeling is flagged ambiguous (warned, or raised under
+  `strict=True`): the statistical shocks are then likely mixtures of
+  economic shocks, and the caller should fall back to `"lambda_desc"`,
+  report the shocks as statistical objects, and drop variable-indexed
+  restrictions. Pre-commit `min_gap` and report the realized gap either
+  way — the 0.1 default is a floor, not a target.
+
+  Because the likelihood is invariant to column permutation (permute B by
+  Π and the λ's to Π'Λ_mΠ and every Σ_m is unchanged), the constraint sets
+  of `b_3j = 0` for different j are related by a likelihood-preserving
+  bijection: **every LR statistic in this package is invariant to the
+  labeling**. The tests therefore carry no information about it, and it
+  must be fixed beforehand. What the labeling does determine is which
+  economic claim a rejection supports, and which element is reported as
+  `b_ij` — including in each bootstrap replication, where a draw that
+  relabels contributes a different structural object to statistics such as
+  the share of draws with `b_31 > 0`.
+
+- **`shock_order="variables"`** — the legacy Hungarian form of the same
+  rule; it selects the identical permutation but reports no diagnostics.
+  Each column is
   assigned to the variable it impacts most on impact, using impact *shares*
   normalized by each variable's residual standard deviation (so the
   assignment is unit-free) and a Hungarian best-assignment across columns.

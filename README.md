@@ -63,12 +63,18 @@ res.plot_regimes(series=y.columns[0], threshold=0.7)
 ### Shock ordering
 
 B is identified only up to column permutation and sign, so the order in
-which shocks come out of the optimizer is arbitrary. Two conventions are
-available for fixing it (plus explicit permutations):
+which shocks come out of the optimizer is arbitrary — and every LR
+statistic is *invariant* to that order, so no test can validate a
+labeling. Fix it first, by a rule stated in advance:
 
 ```python
-# Cholesky-style: shock j = the shock of variable j (assignment by
-# scale-normalized impact shares; warns if the matching is ambiguous)
+# Recommended: standardize B by variable scale, score every assignment of
+# shocks to variables by total own-variable impact, take the maximizer,
+# orient signs so each own impact is positive.
+res = model.fit(n_starts=50, random_state=0, shock_order="max_own_impact")
+print(res.labeling_report_)   # best vs second-best score, gap, own shares
+
+# Legacy Hungarian form of the same rule: identical permutation, no report
 res = model.fit(n_starts=50, random_state=0, shock_order="variables")
 
 # HL volatility labeling: sort shocks by their regime-2 relative
@@ -81,12 +87,18 @@ res.sort_shocks(regime=2)            # same as "lambda_desc"
 res.reorder_shocks([1, 2, 0])        # any explicit permutation
 ```
 
-`"variables"` matches how conventional-SVAR readers expect shocks to be
-labeled and is the natural display convention; `"lambda_desc"` is
-regime-based and useful as a robustness/diagnostic device. Both are only
-as credible as the statistics behind them — check the identification block
-in `summary()` (distinct λ's) and heed the ambiguity warning. See
-`THEORY.md`, Section 5.
+`"max_own_impact"` labels shocks the way conventional-SVAR readers expect
+and reports how sharply it did so: the assignment score runs from about 1
+(shocks spread evenly over the variables) to K (a clean one-to-one match),
+and the best-minus-second-best gap is the credibility statistic for the
+labels. When that gap falls below `min_gap` the labeling is flagged
+ambiguous — the declared fallback is `"lambda_desc"`, reporting the shocks
+as statistical objects and dropping variable-indexed restrictions such as
+`b_32 = 0`. `"lambda_desc"` is regime-based and also useful as an
+independent robustness check: agreement between the two orderings is
+stronger evidence than either alone. Both are only as credible as the
+statistics behind them — check the identification block in `summary()`
+(distinct λ's) too. See `THEORY.md`, Section 5.
 
 ## What's in the box
 
@@ -95,6 +107,7 @@ in `summary()` (distinct λ's) and heed the ambiguity warning. See
 | MSVECM / MSVAR estimation (EM, multi-start, log-Λ parameterization, autograd gradients) | `msid.model`, `msid.estimation` |
 | Zero / sign / long-run restrictions on B and Ξ | `msid.Restrictions` |
 | Identification Wald tests for λ distinctness (auto in `summary()`) | `msid.inference.wald_lambda` |
+| Deterministic shock labeling + best/second-best diagnostics | `msid.labeling`, `results.order_shocks_by_max_own_impact()` |
 | LR tests of economic restrictions, AIC/SC model tables | `msid.compare_models`, `msid.model_table` |
 | State-invariance LR test (M ≥ 3), bootstrap overidentification J-test | `results.test_b_invariance()`, `results.test_overidentification()` |
 | Overlapping-window Wald test for temporal stability of B | `results.test_b_stability(...)` |

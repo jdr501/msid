@@ -124,9 +124,16 @@ class _MSBase(ABC):
         L-BFGS iterations of each structural M-step.
 
         ``shock_order`` fixes the (otherwise arbitrary) column permutation
-        of B after estimation: ``"variables"`` matches each shock to the
-        variable it impacts most (scale-normalized Hungarian assignment;
-        Cholesky-style labels, warns when ambiguous), ``"lambda_desc"`` /
+        of B after estimation.  ``"max_own_impact"`` applies the
+        pre-specified labeling rule of :mod:`msid.labeling` -- scale
+        normalization, then the assignment of shocks to variables that
+        maximizes total own-variable impact -- and stores its diagnostics
+        (best vs second-best score, gap, ambiguity flag) in
+        ``results.labeling_report_``; this is the recommended choice, and
+        the labeling must be fixed before any restriction is tested.
+        ``"variables"`` is the legacy Hungarian form of the same rule: it
+        selects the identical permutation but reports nothing.
+        ``"lambda_desc"`` /
         ``"lambda_asc"`` sort shocks by their regime-2 relative variance
         (HL's volatility labeling; largest first / smallest first), an
         explicit permutation like ``[1, 2, 0]`` applies that order, and
@@ -162,7 +169,9 @@ class _MSBase(ABC):
         )
         res = _make_results(self, best, R, DY, Z, index, logliks, config)
         if shock_order is not None:
-            if shock_order == "variables":
+            if shock_order == "max_own_impact":
+                res.order_shocks_by_max_own_impact()
+            elif shock_order == "variables":
                 res.order_shocks_by_variables()
             elif shock_order == "lambda_desc":
                 res.sort_shocks(regime=2, ascending=False)
@@ -170,9 +179,9 @@ class _MSBase(ABC):
                 res.sort_shocks(regime=2, ascending=True)
             elif isinstance(shock_order, str):
                 raise ValueError(
-                    "shock_order must be 'variables', 'lambda_desc', "
-                    f"'lambda_asc', a permutation of 0..{self.K - 1}, or "
-                    f"None; got {shock_order!r}"
+                    "shock_order must be 'max_own_impact', 'variables', "
+                    "'lambda_desc', 'lambda_asc', a permutation of "
+                    f"0..{self.K - 1}, or None; got {shock_order!r}"
                 )
             else:
                 res.reorder_shocks(shock_order)
