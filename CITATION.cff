@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "msid: Markov-Switching Statistical Identification for Structural VAR/VECM Models"
 type: software
-version: 0.1.0
-date-released: 2026-08-02
+version: 0.1.1
+date-released: 2026-09-03
 license: MIT
 repository-code: "https://github.com/jdr501/msid"
 authors:
