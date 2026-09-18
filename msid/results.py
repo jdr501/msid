@@ -163,6 +163,50 @@ class _ResultsBase:
         table = compare_models(self, restricted, df_override=df_override)
         return table, restricted
 
+    def test_restrictions_bootstrap(
+        self,
+        restrictions: Restrictions,
+        n_boot: int = 499,
+        n_starts: int = 20,
+        max_iter: int = 400,
+        n_extra_starts: int = 0,
+        polish: bool = True,
+        df_override=None,
+        n_jobs: int = -1,
+        random_state=None,
+    ):
+        """Fit the restricted model and LR-test it against a simulated null.
+
+        The bootstrap counterpart of :meth:`test_restrictions`.  Instead of
+        referring the statistic to chi-squared, the null is simulated by a
+        fixed-design wild bootstrap in structural space, so the restriction
+        holds by construction in every replication (see
+        :mod:`msid.inference.boot_lr`).  Use it when the conclusion rests on a
+        non-rejection, where a correctly sized test is the whole argument.
+
+        Returns ``(BootLRResult, restricted_fit)``.
+        """
+        from .inference.boot_lr import bootstrap_lr_test
+
+        restricted = self.model.fit(
+            restrictions=restrictions,
+            n_starts=n_starts,
+            random_state=random_state,
+            n_jobs=n_jobs,
+        )
+        result = bootstrap_lr_test(
+            self,
+            restricted,
+            n_boot=n_boot,
+            max_iter=max_iter,
+            n_extra_starts=n_extra_starts,
+            polish=polish,
+            df_override=df_override,
+            n_jobs=n_jobs,
+            random_state=random_state,
+        )
+        return result, restricted
+
     def test_b_invariance(self):
         """LR test for state-invariant B, M >= 3 (HL Eq. 6; spec 6.1)."""
         from .inference.invariance import lr_state_invariance

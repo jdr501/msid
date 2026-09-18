@@ -54,6 +54,11 @@ R.b_zeros([(2, 0), (2, 1)])                   # b31 = b32 = 0 (0-indexed)
 lr_table, res_r = res.test_restrictions(R)
 print(lr_table)
 
+# same test against a SIMULATED null instead of chi-squared -- worth the
+# compute whenever the conclusion rests on a non-rejection
+boot, res_r = res.test_restrictions_bootstrap(R, n_boot=499)
+print(boot)
+
 irf = res.irf(horizon=30, ci=0.68, n_boot=1000)   # wild-bootstrap bands
 irf.plot()
 
@@ -109,6 +114,7 @@ statistics behind them — check the identification block in `summary()`
 | Identification Wald tests for λ distinctness (auto in `summary()`) | `msid.inference.wald_lambda` |
 | Deterministic shock labeling + best/second-best diagnostics | `msid.labeling`, `results.order_shocks_by_max_own_impact()` |
 | LR tests of economic restrictions, AIC/SC model tables | `msid.compare_models`, `msid.model_table` |
+| Bootstrap null distribution for those LR tests, with nesting repair | `msid.bootstrap_lr_test`, `results.test_restrictions_bootstrap(...)` |
 | State-invariance LR test (M ≥ 3), bootstrap overidentification J-test | `results.test_b_invariance()`, `results.test_overidentification()` |
 | Overlapping-window Wald test for temporal stability of B | `results.test_b_stability(...)` |
 | Rolling-window coefficient stability diagnostics | `results.rolling_stability(...)` |

@@ -15,6 +15,7 @@ Quick start
 """
 
 from .datasets import load_example, load_tether
+from .inference.boot_lr import BootLRResult, bootstrap_lr_test
 from .inference.lr_tests import compare_models, model_table
 from .labeling import LabelingReport, max_own_impact_order
 from .model import MSVAR, MSVECM
@@ -26,10 +27,12 @@ __version__ = "0.1.1"
 __all__ = [
     "MSVAR",
     "MSVECM",
+    "BootLRResult",
     "LabelingReport",
     "Restrictions",
     "__version__",
     "arch_lm",
+    "bootstrap_lr_test",
     "compare_models",
     "johansen",
     "justify_ms",
