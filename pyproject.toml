@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "msid"
-version = "0.1.1"
+version = "0.2.0"
 description = "Markov-Switching Statistical Identification for Structural VAR/VECM models (Herwartz & Lutkepohl 2014; Rajapaksa & Shao 2026)"
 readme = "README.md"
 license = { text = "MIT" }

@@ -22,7 +22,7 @@ from .model import MSVAR, MSVECM
 from .pretest import arch_lm, johansen, justify_ms, select_lags
 from .restrictions import Restrictions
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 __all__ = [
     "MSVAR",
