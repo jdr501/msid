@@ -2,9 +2,14 @@
 
 Exactly as in HL (2014, Section 3.2, Eq. 7) and the Tether paper:
 
-1. Conditional on the ML estimates, ``Dy*_t = fitted_t + psi_t u_hat_t``
+1. Conditional on the ML estimates, ``Dy*_t = fitted_t + psi_t u_tilde_t``
    with psi_t i.i.d. Rademacher (+-1 w.p. 0.5), regressors held at their
-   original values (fixed design).
+   original values (fixed design).  The residuals are leverage-adjusted,
+   ``u_tilde_t = u_hat_t / sqrt(1 - h_tt)`` with h_tt the diagonal of the
+   hat matrix of Z (Davidson and Flachaire, 2008).  Without this the refit
+   projects the flipped residuals onto Z a second time and every draw of B*
+   comes out smaller than B_hat by roughly sqrt(1 - k/T), which slides the
+   whole percentile band below the point estimate.
 2. Per replication, theta* and B* are re-estimated by maximizing the
    likelihood **starting from the ML estimates** (warm start), holding
    Lambda_m and P fixed at their ML values -- the relative variances and
@@ -27,16 +32,27 @@ from joblib import Parallel, delayed
 __all__ = ["bootstrap_irf"]
 
 
-def _one_replication(results, child, horizon, cumulate, max_iter):
+def _leverage_scale(Z):
+    """Return ``1 / sqrt(1 - h_tt)``, the Davidson-Flachaire (2008) weights.
+
+    ``h_tt`` is the diagonal of the hat matrix of the regressors, so the
+    weights undo the shrinkage the bootstrap refit applies when it projects
+    the sign-flipped residuals onto ``Z`` a second time.
+    """
+    h = np.einsum("ti,ij,tj->t", Z, np.linalg.pinv(Z.T @ Z), Z)
+    return 1.0 / np.sqrt(np.clip(1.0 - h, 1e-6, None))
+
+
+def _one_replication(results, child, horizon, cumulate, max_iter, scale):
     from ..estimation.em import EMConfig, EMState, run_em
     from ..irf import point_irf
 
     rng = np.random.default_rng(child)
     model, R = results.model, results.restrictions
     DY, Z = results._DY, results._Z
-    U = results.residuals_.to_numpy()
+    U = results.residuals_.to_numpy() * scale[:, None]
     psi = rng.integers(0, 2, size=DY.shape[0]) * 2.0 - 1.0
-    DYb = (DY - U) + psi[:, None] * U
+    DYb = (DY - results.residuals_.to_numpy()) + psi[:, None] * U
 
     state = EMState(
         Theta=results.theta_.copy(),
@@ -84,10 +100,12 @@ def bootstrap_irf(
     IRF array (so users can compute other quantiles), lo/hi the percentile
     bands at level ``ci``.
     """
+    scale = _leverage_scale(results._Z)
     ss = np.random.SeedSequence(random_state)
     children = ss.spawn(n_boot)
     out = Parallel(n_jobs=n_jobs)(
-        delayed(_one_replication)(results, c, horizon, cumulate, max_iter) for c in children
+        delayed(_one_replication)(results, c, horizon, cumulate, max_iter, scale)
+        for c in children
     )
     draws = np.array([d for d in out if d is not None])
     n_fail = n_boot - draws.shape[0]

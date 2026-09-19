@@ -21,6 +21,40 @@ def test_bootstrap_determinism_and_nondegenerate(fitted_example):
     assert irf1.draws.shape[1:] == (7, 3, 3)  # full array returned
 
 
+def test_leverage_scale_is_the_davidson_flachaire_weight(fitted_example):
+    """``_leverage_scale`` returns ``1 / sqrt(1 - h_tt)`` for the hat matrix of Z."""
+    from msid.inference.bootstrap import _leverage_scale
+
+    Z = fitted_example._Z
+    h = np.einsum("ti,ij,tj->t", Z, np.linalg.pinv(Z.T @ Z), Z)
+    assert np.isclose(h.sum(), Z.shape[1], atol=1e-6)  # trace of the hat matrix is k
+    assert (h >= 0).all() and (h < 1).all()
+    assert np.allclose(_leverage_scale(Z), 1.0 / np.sqrt(1.0 - h))
+    assert (_leverage_scale(Z) > 1.0).all()
+
+
+def test_bootstrap_dgp_uses_the_leverage_adjusted_residuals(fitted_example):
+    """The refit must not shrink the residual scale a second time.
+
+    ``DY* = fitted + psi o u`` is regressed on Z again inside the replication,
+    so unadjusted residuals come back smaller by roughly ``sqrt(1 - k/T)`` and
+    every draw of B* lands below B_hat, sliding the percentile band off its own
+    point estimate. Rerunning one replication with the weights switched off must
+    therefore give a different, smaller impact matrix.
+    """
+    from msid.inference.bootstrap import _leverage_scale, _one_replication
+
+    res = fitted_example
+    T = res._Z.shape[0]
+    child = np.random.SeedSequence(3).spawn(1)[0]
+    kw = dict(horizon=0, cumulate="levels", max_iter=60)
+    adj = _one_replication(res, child, scale=_leverage_scale(res._Z), **kw)
+    raw = _one_replication(res, child, scale=np.ones(T), **kw)
+    assert adj is not None and raw is not None
+    assert not np.allclose(adj, raw), "the scale argument is not reaching the DGP"
+    assert np.abs(np.diag(raw[0])).sum() < np.abs(np.diag(adj[0])).sum()
+
+
 def test_logsumexp_filter_matches_naive():
     """Log-sum-exp filter agrees with the naive filter on easy data."""
     rng = np.random.default_rng(0)
