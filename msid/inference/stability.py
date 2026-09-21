@@ -3,15 +3,15 @@
 * Rolling-window coefficient estimation and plots (Tether Appendix E):
   per-equation OLS coefficient paths with 95% bands over rolling windows.
 * Overlapping-window Wald test for a constant B around a transition date
-  (Tether Appendix F.2): W = Delta' V[Delta]^{-1} Delta with V from a
-  parametric bootstrap under H0 of common B, drawing
-  ``u*_t ~ N(0, sum_m p_{t|T}(m) Sigma_m)`` at each date.
+  (Tether Appendix F.2).  The null of a common B is imposed in the bootstrap
+  DGP, and by default the DGP keeps each date's realized shock magnitude
+  (``null="wild"``); see :func:`b_stability_test` for why that matters.
 """
 
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -112,18 +112,84 @@ def rolling_stability(results, window: int = 400, lags: int = 3) -> RollingStabi
 
 @dataclass
 class BStabilityResult:
+    """Overlapping-window test for a constant impact matrix B.
+
+    ``statistic`` and ``p_value`` test ALL of vec(B).  The bootstrap
+    replications are kept, so any subset of B, or the scale-free version, can
+    be tested from the SAME draws with :meth:`subtest` at no extra cost.
+    """
+
     statistic: float
     p_value: float
     n_boot: int
     B1: np.ndarray
     B2: np.ndarray
     windows: tuple
+    null: str = "wild"
+    draws1: np.ndarray | None = field(default=None, repr=False)
+    draws2: np.ndarray | None = field(default=None, repr=False)
+
+    def subtest(self, elements=None, relative: bool = False):
+        """Wald test on part of B, from the stored replications.
+
+        Parameters
+        ----------
+        elements : list of (row, col) pairs, 0-based.  ``[(2, 0), (2, 1)]`` is
+            (b31, b32).  ``None`` tests every element.
+        relative : divide each column by its own diagonal element first.  That
+            removes the SCALE of each shock and leaves only the DIRECTION of its
+            impacts, so it tests off-diagonal elements only.
+
+        Returns
+        -------
+        (W, p_value, df)
+        """
+        if self.draws1 is None:
+            raise ValueError("this result was built without its bootstrap draws")
+        return _wald(self.B1, self.B2, self.draws1, self.draws2, elements, relative)
 
     def __str__(self) -> str:  # pragma: no cover
         return (
             f"Overlapping-window Wald test for constant B: W = {self.statistic:.2f}, "
-            f"bootstrap p = {self.p_value:.2f} ({self.n_boot} reps)"
+            f"bootstrap p = {self.p_value:.4f} ({self.n_boot} reps, {self.null} null)"
         )
+
+
+def _pick(B: np.ndarray, elements, relative: bool) -> np.ndarray:
+    """The elements of B the test compares, in column-major order."""
+    K = B.shape[0]
+    if relative:
+        B = B / np.diag(B)[None, :]
+        pairs = [(i, j) for j in range(K) for i in range(K) if i != j]
+    else:
+        pairs = [(i, j) for j in range(K) for i in range(K)]
+    if elements is not None:
+        pairs = [tuple(e) for e in elements]
+        if relative and any(i == j for i, j in pairs):
+            raise ValueError("relative=True compares off-diagonal elements only")
+    return np.array([B[i, j] for i, j in pairs])
+
+
+def _wald(B1, B2, D1, D2, elements, relative):
+    """Wald statistic and bootstrap p-value, both centred on the NULL mean.
+
+    The bootstrap DGP imposes a common B, so the replications ARE the null
+    distribution of the estimated window difference, including any bias the
+    window estimator has when the two windows hold different regime mixes.
+    Observed and bootstrap differences are therefore both measured from the
+    null mean.  Centring only the bootstrap side, as an earlier version did,
+    leaves that bias in the observed statistic alone and over-rejects.
+    """
+    d = _pick(B1, elements, relative) - _pick(B2, elements, relative)
+    D = np.array([_pick(a, elements, relative) - _pick(b, elements, relative)
+                  for a, b in zip(D1, D2)])
+    mu = D.mean(axis=0)
+    iV = np.linalg.pinv(np.atleast_2d(np.cov(D.T, ddof=1)))
+    W = float((d - mu) @ iV @ (d - mu))
+    Dc = D - mu
+    Ws = np.einsum("bi,ij,bj->b", Dc, iV, Dc)
+    p = float((1 + (Ws >= W).sum()) / (len(Ws) + 1))
+    return W, p, int(d.size)
 
 
 def _window_slice(index: pd.Index, center, months_before: int, months_after: int):
@@ -181,6 +247,7 @@ def b_stability_test(
     n_boot: int = 3000,
     min_regime_obs: int = 30,
     prob_threshold: float = 0.7,
+    null: str = "wild",
     n_jobs: int = -1,
     random_state=None,
 ) -> BStabilityResult:
@@ -191,7 +258,37 @@ def b_stability_test(
     ``window_after`` (5 before / 16 after).  Refuses to run if either window
     holds fewer than ``min_regime_obs`` high-probability observations from
     each regime, since B is not identified within such a window.
+
+    Both windows are re-estimated warm started from the full-sample fit and
+    aligned to it by the closest signed column permutation, so they share one
+    reference state.
+
+    The null of a common B
+    ----------------------
+    Each window normalizes its state-1 shocks to unit variance WITHIN that
+    window.  A window that happens to contain a few very large shocks therefore
+    gets a larger impact matrix even when the true B is constant.  The
+    bootstrap has to reproduce that, or its variance is too small and the test
+    over-rejects.
+
+    ``null="wild"`` (default)
+        Rotate the residuals into structural shocks with the full-sample B,
+        flip their signs at random, rotate back:
+        ``eps_t = B^-1 u_t``, ``u*_t = B (psi_t * eps_t)``.  Every date shares
+        ONE B, so the null is imposed, and every date keeps its realized shock
+        magnitude, so episodes stay in the windows that contain them.  This is
+        the construction msid already uses for the LR bootstrap.
+    ``null="gaussian"``
+        ``u*_t ~ N(0, sum_m p_{t|T}(m) Sigma_m)``, the earlier behaviour.  Kept
+        for comparison.  Under fat-tailed, clustered shocks it cannot produce
+        the window-to-window variation the estimator actually has, and it
+        over-rejects.
+
+    The statistic tests all of vec(B).  Use ``result.subtest(...)`` for a
+    subset or for the scale-free version from the same replications.
     """
+    if null not in ("wild", "gaussian"):
+        raise ValueError(f'null must be "wild" or "gaussian", got {null!r}')
     index = results.smoothed_probs_.index
     if not isinstance(index, pd.DatetimeIndex):
         raise TypeError("b_stability_test needs a DatetimeIndex on the data")
@@ -212,45 +309,50 @@ def b_stability_test(
 
     B1 = _estimate_b_window(results, rows1, DY, Z)
     B2 = _estimate_b_window(results, rows2, DY, Z)
-    delta = (B1 - B2).ravel(order="F")
 
-    # parametric bootstrap under H0 of common B:
-    # u*_t ~ N(0, sum_m p_{t|T}(m) Sigma_m)
-    T = DY.shape[0]
-    sigmas = results.Sigma_
-    mix = np.einsum("tm,mij->tij", probs, np.stack(sigmas))
-    chols = np.linalg.cholesky(mix)
+    T, K = DY.shape
     fitted = Z @ results.theta_.T
-    ss = np.random.SeedSequence(random_state)
-    children = ss.spawn(n_boot)
+    if null == "wild":
+        # residuals recomputed from theta_, never read from residuals_, which
+        # can be stale after a warm-started refit
+        E = (DY - fitted) @ np.linalg.inv(results.B_).T
+        B0 = results.B_
+
+        def _make(rng):
+            psi = rng.integers(0, 2, size=E.shape) * 2.0 - 1.0
+            return fitted + (psi * E) @ B0.T
+    else:
+        mix = np.einsum("tm,mij->tij", probs, np.stack(results.Sigma_))
+        chols = np.linalg.cholesky(mix)
+
+        def _make(rng):
+            return fitted + np.einsum("tij,tj->ti", chols, rng.standard_normal((T, K)))
 
     def _one(child):
-        rng = np.random.default_rng(child)
-        eps = rng.standard_normal((T, results.K))
-        Ub = np.einsum("tij,tj->ti", chols, eps)
-        DYb = fitted + Ub
+        DYb = _make(np.random.default_rng(child))
         try:
-            B1b = _estimate_b_window(results, rows1, DYb, Z)
-            B2b = _estimate_b_window(results, rows2, DYb, Z)
-            return (B1b - B2b).ravel(order="F")
+            return (_estimate_b_window(results, rows1, DYb, Z),
+                    _estimate_b_window(results, rows2, DYb, Z))
         except (np.linalg.LinAlgError, RuntimeError, ValueError):
             return None
 
-    deltas = Parallel(n_jobs=n_jobs)(delayed(_one)(c) for c in children)
-    deltas = np.array([d for d in deltas if d is not None])
-    if deltas.shape[0] < max(20, results.K**2 + 1):
+    children = np.random.SeedSequence(random_state).spawn(n_boot)
+    out = [o for o in Parallel(n_jobs=n_jobs)(delayed(_one)(c) for c in children)
+           if o is not None]
+    if len(out) < max(20, K**2 + 1):
         raise RuntimeError("too few successful bootstrap replications for V[Delta]")
-    V = np.cov(deltas.T, ddof=1)
-    iV = np.linalg.pinv(V)
-    W = float(delta @ iV @ delta)
-    dc = deltas - deltas.mean(axis=0)
-    Wstars = np.einsum("bi,ij,bj->b", dc, iV, dc)
-    p = float((Wstars >= W).mean())
+    D1 = np.array([o[0] for o in out])
+    D2 = np.array([o[1] for o in out])
+
+    W, p, _ = _wald(B1, B2, D1, D2, elements=None, relative=False)
     return BStabilityResult(
         statistic=W,
         p_value=p,
-        n_boot=deltas.shape[0],
+        n_boot=len(out),
         B1=B1,
         B2=B2,
         windows=(window_before, window_after),
+        null=null,
+        draws1=D1,
+        draws2=D2,
     )
