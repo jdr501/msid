@@ -47,7 +47,7 @@ def test_bootstrap_dgp_uses_the_leverage_adjusted_residuals(fitted_example):
     res = fitted_example
     T = res._Z.shape[0]
     child = np.random.SeedSequence(3).spawn(1)[0]
-    kw = dict(horizon=0, cumulate="levels", max_iter=60)
+    kw = {"horizon": 0, "cumulate": "levels", "max_iter": 60}
     adj = _one_replication(res, child, scale=_leverage_scale(res._Z), **kw)
     raw = _one_replication(res, child, scale=np.ones(T), **kw)
     assert adj is not None and raw is not None

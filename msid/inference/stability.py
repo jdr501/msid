@@ -181,8 +181,9 @@ def _wald(B1, B2, D1, D2, elements, relative):
     leaves that bias in the observed statistic alone and over-rejects.
     """
     d = _pick(B1, elements, relative) - _pick(B2, elements, relative)
-    D = np.array([_pick(a, elements, relative) - _pick(b, elements, relative)
-                  for a, b in zip(D1, D2)])
+    D = np.array(
+        [_pick(a, elements, relative) - _pick(b, elements, relative) for a, b in zip(D1, D2)]
+    )
     mu = D.mean(axis=0)
     iV = np.linalg.pinv(np.atleast_2d(np.cov(D.T, ddof=1)))
     W = float((d - mu) @ iV @ (d - mu))
@@ -198,6 +199,20 @@ def _window_slice(index: pd.Index, center, months_before: int, months_after: int
     hi = center + pd.DateOffset(months=months_after)
     mask = (index >= lo) & (index <= hi)
     return np.where(mask)[0]
+
+
+def _wild_draw(fitted: np.ndarray, E: np.ndarray, B0: np.ndarray, rng) -> np.ndarray:
+    """One wild-bootstrap sample of DY under a common B.
+
+    ONE Rademacher sign per DATE, not per element.  A date's K structural
+    shocks are flipped together, so whatever co-movement the realized shocks
+    have at that date survives into the draw, and each date keeps its realized
+    magnitude.  Flipping every element separately makes the draws cleaner than
+    the data, shrinks the null distribution and over-rejects.  This is the
+    Goncalves-Kilian convention and matches msid's IRF bootstrap.
+    """
+    psi = rng.integers(0, 2, size=(E.shape[0], 1)) * 2.0 - 1.0
+    return fitted + (psi * E) @ B0.T
 
 
 def _estimate_b_window(results, rows: np.ndarray, DY, Z) -> np.ndarray:
@@ -274,7 +289,8 @@ def b_stability_test(
     ``null="wild"`` (default)
         Rotate the residuals into structural shocks with the full-sample B,
         flip their signs at random, rotate back:
-        ``eps_t = B^-1 u_t``, ``u*_t = B (psi_t * eps_t)``.  Every date shares
+        ``eps_t = B^-1 u_t``, ``u*_t = B (psi_t * eps_t)`` with a SINGLE
+        Rademacher draw ``psi_t`` per date.  Every date shares
         ONE B, so the null is imposed, and every date keeps its realized shock
         magnitude, so episodes stay in the windows that contain them.  This is
         the construction msid already uses for the LR bootstrap.
@@ -319,8 +335,8 @@ def b_stability_test(
         B0 = results.B_
 
         def _make(rng):
-            psi = rng.integers(0, 2, size=E.shape) * 2.0 - 1.0
-            return fitted + (psi * E) @ B0.T
+            return _wild_draw(fitted, E, B0, rng)
+
     else:
         mix = np.einsum("tm,mij->tij", probs, np.stack(results.Sigma_))
         chols = np.linalg.cholesky(mix)
@@ -331,14 +347,15 @@ def b_stability_test(
     def _one(child):
         DYb = _make(np.random.default_rng(child))
         try:
-            return (_estimate_b_window(results, rows1, DYb, Z),
-                    _estimate_b_window(results, rows2, DYb, Z))
+            return (
+                _estimate_b_window(results, rows1, DYb, Z),
+                _estimate_b_window(results, rows2, DYb, Z),
+            )
         except (np.linalg.LinAlgError, RuntimeError, ValueError):
             return None
 
     children = np.random.SeedSequence(random_state).spawn(n_boot)
-    out = [o for o in Parallel(n_jobs=n_jobs)(delayed(_one)(c) for c in children)
-           if o is not None]
+    out = [o for o in Parallel(n_jobs=n_jobs)(delayed(_one)(c) for c in children) if o is not None]
     if len(out) < max(20, K**2 + 1):
         raise RuntimeError("too few successful bootstrap replications for V[Delta]")
     D1 = np.array([o[0] for o in out])

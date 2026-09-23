@@ -82,7 +82,7 @@ def test_null_dgp_satisfies_the_restriction(restricted_pair):
 
 def test_reproducible_under_a_fixed_seed(restricted_pair):
     un, res = restricted_pair
-    kw = dict(n_boot=10, max_iter=30, n_jobs=1, random_state=7)
+    kw = {"n_boot": 10, "max_iter": 30, "n_jobs": 1, "random_state": 7}
     a = msid.bootstrap_lr_test(un, res, **kw)
     b = msid.bootstrap_lr_test(un, res, **kw)
     assert a.p_value == b.p_value
@@ -104,7 +104,7 @@ def test_nesting_is_validated(fitted_example):
 
 def test_df_override_moves_only_the_chi2_column(restricted_pair):
     un, res = restricted_pair
-    kw = dict(n_boot=10, max_iter=30, n_jobs=1, random_state=0)
+    kw = {"n_boot": 10, "max_iter": 30, "n_jobs": 1, "random_state": 0}
     a = msid.bootstrap_lr_test(un, res, **kw)
     b = msid.bootstrap_lr_test(un, res, df_override=2, **kw)
     assert b.df == 2

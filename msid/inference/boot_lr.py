@@ -194,9 +194,11 @@ def _one_draw(child, DY, Z, M, R_res, R_un, state0, fitted0, eps0, B0, cfg, C_re
 
 def _check_nested(unrestricted, restricted) -> int:
     """Validate nesting and return the degrees of freedom."""
-    if unrestricted.model is not restricted.model:
-        if unrestricted._DY.shape != restricted._DY.shape:
-            raise ValueError("the two fits are not on the same data")
+    if (
+        unrestricted.model is not restricted.model
+        and unrestricted._DY.shape != restricted._DY.shape
+    ):
+        raise ValueError("the two fits are not on the same data")
     Ru, Rr = unrestricted.restrictions, restricted.restrictions
     if not set(Ru.b_zero_indices) <= set(Rr.b_zero_indices):
         raise ValueError(

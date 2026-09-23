@@ -104,8 +104,7 @@ def bootstrap_irf(
     ss = np.random.SeedSequence(random_state)
     children = ss.spawn(n_boot)
     out = Parallel(n_jobs=n_jobs)(
-        delayed(_one_replication)(results, c, horizon, cumulate, max_iter, scale)
-        for c in children
+        delayed(_one_replication)(results, c, horizon, cumulate, max_iter, scale) for c in children
     )
     draws = np.array([d for d in out if d is not None])
     n_fail = n_boot - draws.shape[0]
