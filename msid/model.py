@@ -107,7 +107,7 @@ class _MSBase(ABC):
         tol_param: float = 1e-6,
         b0_scale: float = 0.1,
         lambda_init: str = "random",
-        lambda_range: tuple[float, float] = (0.1, 10.0),
+        lambda_range: tuple[float, float] = (0.01, 100.0),
         label_order: str = "lambda_sort",
         struct_maxiter: int = 200,
         shock_order=None,
