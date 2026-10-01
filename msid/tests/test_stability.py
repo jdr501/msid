@@ -165,3 +165,25 @@ def test_fixed_probs_refuses_more_than_two_regimes(fitted_example):
 
     with pytest.raises(ValueError, match="exactly 2 regimes"):
         b_stability_test_fixed_probs(_ThreeRegimes(fitted_example), "2020-05-01")
+
+
+def test_draft_exact_uses_the_plain_p_value(fitted_example):
+    """draft_exact=True reproduces the paper's arithmetic: no +1 in the p-value."""
+    res = b_stability_test_fixed_probs(
+        fitted_example,
+        "2020-05-01",
+        n_boot=50,
+        min_regime_obs=5,
+        draft_exact=True,
+        n_jobs=1,
+        random_state=0,
+    )
+    assert res.draft is True
+    assert res.centered is False
+    assert "draft arithmetic" in res.null
+    # the plain form can reach exactly 0 and never exceeds 1
+    assert 0.0 <= res.p_value <= 1.0
+    # the p-value is a multiple of 1/n_boot, which the +1 form never is
+    assert np.isclose(res.p_value * res.n_boot, round(res.p_value * res.n_boot))
+    W, p, df = res.subtest()
+    assert (W, p, df) == pytest.approx((res.statistic, res.p_value, 9))

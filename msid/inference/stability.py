@@ -133,6 +133,7 @@ class BStabilityResult:
     windows: tuple
     null: str = "wild"
     centered: bool = True
+    draft: bool = False
     draws1: np.ndarray | None = field(default=None, repr=False)
     draws2: np.ndarray | None = field(default=None, repr=False)
 
@@ -161,6 +162,7 @@ class BStabilityResult:
             elements,
             relative,
             center=self.centered,
+            draft=self.draft,
         )
 
     def __str__(self) -> str:  # pragma: no cover
@@ -185,7 +187,7 @@ def _pick(B: np.ndarray, elements, relative: bool) -> np.ndarray:
     return np.array([B[i, j] for i, j in pairs])
 
 
-def _wald(B1, B2, D1, D2, elements, relative, center: bool = True):
+def _wald(B1, B2, D1, D2, elements, relative, center: bool = True, draft: bool = False):
     """Wald statistic and bootstrap p-value, both centred on the NULL mean.
 
     The bootstrap DGP imposes a common B, so the replications ARE the null
@@ -206,11 +208,19 @@ def _wald(B1, B2, D1, D2, elements, relative, center: bool = True):
         [_pick(a, elements, relative) - _pick(b, elements, relative) for a, b in zip(D1, D2)]
     )
     mu = D.mean(axis=0) if center else np.zeros(D.shape[1])
-    iV = np.linalg.pinv(np.atleast_2d(np.cov(D.T, ddof=1)))
+    V = np.atleast_2d(np.cov(D.T, ddof=1))
+    # ``draft=True`` reproduces the paper's own arithmetic exactly: a plain
+    # inverse and p = #{W* >= W} / B, which can return 0.  The default uses the
+    # pseudo-inverse, which survives a near-singular V when an element of B is
+    # pinned at zero, and the (1 + #)/(B + 1) form, which cannot return 0.
+    iV = np.linalg.inv(V) if draft else np.linalg.pinv(V)
     W = float((d - mu) @ iV @ (d - mu))
     Dc = D - mu
     Ws = np.einsum("bi,ij,bj->b", Dc, iV, Dc)
-    p = float((1 + (Ws >= W).sum()) / (len(Ws) + 1))
+    if draft:
+        p = float((Ws >= W).mean())
+    else:
+        p = float((1 + (Ws >= W).sum()) / (len(Ws) + 1))
     return W, p, int(d.size)
 
 
@@ -304,6 +314,7 @@ def b_stability_test_fixed_probs(
     prob_threshold: float = 0.7,
     center: bool = False,
     demean: bool = False,
+    draft_exact: bool = False,
     n_jobs: int = -1,
     random_state=None,
 ) -> BStabilityResult:
@@ -329,6 +340,15 @@ def b_stability_test_fixed_probs(
         the draft.  Observed and bootstrap values are treated identically, so
         the p-value is valid; it simply has less power than the centred version
         when the window estimator is biased under the null.
+
+    ``draft_exact=True`` reproduces the draft's arithmetic to the letter: the
+    regime covariances are centred on their own weighted means, V is inverted
+    rather than pseudo-inverted, and the p-value is the plain
+    ``#{W* >= W} / B`` without the ``+1``.  The default differs in exactly
+    those three places, each in the safer direction: the bootstrap draws are
+    zero-mean by construction, so demeaning only the observed side puts a wedge
+    between the two; the pseudo-inverse survives a near-singular V when an
+    element of B sits at zero; and the ``+1`` form cannot return p = 0.
 
     Because no EM runs per replication, this is one to two orders of magnitude
     faster than :func:`b_stability_test`, so ``n_boot = 999`` is cheap.
@@ -365,10 +385,12 @@ def b_stability_test_fixed_probs(
                 "B is not identified within the window"
             )
 
+    use_demean = demean or draft_exact
+
     def _b_of(Ux: np.ndarray, rows: np.ndarray) -> np.ndarray:
         from .invariance import _b_from_pair
 
-        S1, S2 = _weighted_sigmas(Ux[rows], probs[rows], demean=demean)
+        S1, S2 = _weighted_sigmas(Ux[rows], probs[rows], demean=use_demean)
         return _align_b(_b_from_pair(S1, S2), results.B_)
 
     B1 = _b_of(U, rows1)
@@ -393,7 +415,7 @@ def b_stability_test_fixed_probs(
     D1 = np.array([o[0] for o in out])
     D2 = np.array([o[1] for o in out])
 
-    W, p, _ = _wald(B1, B2, D1, D2, elements=None, relative=False, center=center)
+    W, p, _ = _wald(B1, B2, D1, D2, elements=None, relative=False, center=center, draft=draft_exact)
     return BStabilityResult(
         statistic=W,
         p_value=p,
@@ -401,8 +423,13 @@ def b_stability_test_fixed_probs(
         B1=B1,
         B2=B2,
         windows=(window_before, window_after),
-        null="gaussian_fixed_probs" + ("" if center else ", uncentred"),
+        null=(
+            "gaussian_fixed_probs"
+            + ("" if center else ", uncentred")
+            + (", draft arithmetic" if draft_exact else "")
+        ),
         centered=center,
+        draft=draft_exact,
         draws1=D1,
         draws2=D2,
     )
