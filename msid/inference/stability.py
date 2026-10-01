@@ -17,7 +17,13 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
-__all__ = ["BStabilityResult", "RollingStabilityResult", "b_stability_test", "rolling_stability"]
+__all__ = [
+    "BStabilityResult",
+    "RollingStabilityResult",
+    "b_stability_test",
+    "b_stability_test_fixed_probs",
+    "rolling_stability",
+]
 
 
 @dataclass
@@ -126,6 +132,7 @@ class BStabilityResult:
     B2: np.ndarray
     windows: tuple
     null: str = "wild"
+    centered: bool = True
     draws1: np.ndarray | None = field(default=None, repr=False)
     draws2: np.ndarray | None = field(default=None, repr=False)
 
@@ -146,7 +153,15 @@ class BStabilityResult:
         """
         if self.draws1 is None:
             raise ValueError("this result was built without its bootstrap draws")
-        return _wald(self.B1, self.B2, self.draws1, self.draws2, elements, relative)
+        return _wald(
+            self.B1,
+            self.B2,
+            self.draws1,
+            self.draws2,
+            elements,
+            relative,
+            center=self.centered,
+        )
 
     def __str__(self) -> str:  # pragma: no cover
         return (
@@ -170,7 +185,7 @@ def _pick(B: np.ndarray, elements, relative: bool) -> np.ndarray:
     return np.array([B[i, j] for i, j in pairs])
 
 
-def _wald(B1, B2, D1, D2, elements, relative):
+def _wald(B1, B2, D1, D2, elements, relative, center: bool = True):
     """Wald statistic and bootstrap p-value, both centred on the NULL mean.
 
     The bootstrap DGP imposes a common B, so the replications ARE the null
@@ -179,12 +194,18 @@ def _wald(B1, B2, D1, D2, elements, relative):
     Observed and bootstrap differences are therefore both measured from the
     null mean.  Centring only the bootstrap side, as an earlier version did,
     leaves that bias in the observed statistic alone and over-rejects.
+
+    ``center=False`` measures BOTH sides from zero instead.  That is also a
+    valid test -- the same transformation is applied to the observed value and
+    to every draw -- and it is what the paper's original implementation does.
+    It has less power when the null mean is far from zero, since the bias then
+    inflates the observed statistic and the reference distribution alike.
     """
     d = _pick(B1, elements, relative) - _pick(B2, elements, relative)
     D = np.array(
         [_pick(a, elements, relative) - _pick(b, elements, relative) for a, b in zip(D1, D2)]
     )
-    mu = D.mean(axis=0)
+    mu = D.mean(axis=0) if center else np.zeros(D.shape[1])
     iV = np.linalg.pinv(np.atleast_2d(np.cov(D.T, ddof=1)))
     W = float((d - mu) @ iV @ (d - mu))
     Dc = D - mu
@@ -252,6 +273,139 @@ def _align_b(B: np.ndarray, ref: np.ndarray) -> np.ndarray:
         if err < best_err:
             best, best_err = Bc, err
     return best
+
+
+def _weighted_sigmas(U: np.ndarray, w: np.ndarray, demean: bool = False) -> list:
+    """Smoothed-probability-weighted covariance of the residuals, per regime.
+
+    ``Sigma_m = sum_t p_t(m) u_t u_t' / sum_t p_t(m)`` over the rows supplied.
+    With ``demean=True`` each regime is centred on its own weighted mean first;
+    the bootstrap draws are zero-mean by construction, so the default keeps the
+    observed and the simulated side on the same footing.
+    """
+    out = []
+    for m in range(w.shape[1]):
+        wm = w[:, m]
+        denom = max(float(wm.sum()), 1e-12)
+        Um = U
+        if demean:
+            Um = U - (wm[:, None] * U).sum(axis=0) / denom
+        out.append((Um * wm[:, None]).T @ Um / denom)
+    return out
+
+
+def b_stability_test_fixed_probs(
+    results,
+    center_date,
+    window_before: tuple[int, int] = (16, 5),
+    window_after: tuple[int, int] = (5, 16),
+    n_boot: int = 999,
+    min_regime_obs: int = 30,
+    prob_threshold: float = 0.7,
+    center: bool = False,
+    demean: bool = False,
+    n_jobs: int = -1,
+    random_state=None,
+) -> BStabilityResult:
+    """Constant-B test with the regime probabilities HELD FIXED (M = 2 only).
+
+    This is the Tether draft's own implementation of Appendix F.2, kept
+    separate from :func:`b_stability_test` because it is a different statistic,
+    not a different setting of the same one.  Three things differ.
+
+    1.  B is recovered in closed form inside each window, from the pair of
+        smoothed-probability-weighted residual covariances,
+        ``Sigma_2 v = lambda Sigma_1 v`` with ``B = (V')^{-1}``.  Nothing is
+        re-estimated: Theta, P and the smoothed probabilities stay at their
+        pooled values.  :func:`b_stability_test` instead re-runs the whole EM
+        inside each window, so it asks whether a window-specific REFIT lands at
+        the same B.  This one asks whether one B diagonalizes the two window
+        covariances when everything else is held at the pooled fit.
+    2.  The null is the Gaussian parametric one, ``u*_t ~ N(0, Sigma*_t)`` with
+        ``Sigma*_t = sum_m p_{t|T}(m) Sigma_m``, which keeps the date-specific
+        regime composition through the weights rather than assigning each date
+        a hard regime.
+    3.  The Wald statistic is UNCENTRED by default (``center=False``), matching
+        the draft.  Observed and bootstrap values are treated identically, so
+        the p-value is valid; it simply has less power than the centred version
+        when the window estimator is biased under the null.
+
+    Because no EM runs per replication, this is one to two orders of magnitude
+    faster than :func:`b_stability_test`, so ``n_boot = 999`` is cheap.
+
+    Returns the same :class:`BStabilityResult`, so ``subtest`` works on the
+    stored draws exactly as it does for the other test.
+    """
+    M = getattr(results, "M", None) or results.model.M
+    if M != 2:
+        raise ValueError(
+            f"b_stability_test_fixed_probs needs exactly 2 regimes, got M = {M}; "
+            "the closed-form pair decomposition is defined for the baseline pair only"
+        )
+    index = results.smoothed_probs_.index
+    if not isinstance(index, pd.DatetimeIndex):
+        raise TypeError("b_stability_test_fixed_probs needs a DatetimeIndex on the data")
+
+    probs = results.smoothed_probs_.to_numpy()
+    # residuals recomputed from theta_, never read from residuals_, which can be
+    # stale after a warm-started refit
+    U = results._DY - results._Z @ results.theta_.T
+    T, K = U.shape
+
+    rows1 = _window_slice(index, center_date, *window_before)
+    rows2 = _window_slice(index, center_date, *window_after)
+    for w, rows in (("window 1", rows1), ("window 2", rows2)):
+        if rows.size == 0:
+            raise ValueError(f"{w} contains no observations")
+        counts = (probs[rows] > prob_threshold).sum(axis=0)
+        if (counts < min_regime_obs).any():
+            raise ValueError(
+                f"{w} has regimes with fewer than {min_regime_obs} observations "
+                f"at smoothed probability > {prob_threshold} (counts: {counts.tolist()}); "
+                "B is not identified within the window"
+            )
+
+    def _b_of(Ux: np.ndarray, rows: np.ndarray) -> np.ndarray:
+        from .invariance import _b_from_pair
+
+        S1, S2 = _weighted_sigmas(Ux[rows], probs[rows], demean=demean)
+        return _align_b(_b_from_pair(S1, S2), results.B_)
+
+    B1 = _b_of(U, rows1)
+    B2 = _b_of(U, rows2)
+
+    # Gaussian parametric null: one common B is imposed through Sigma_1, Sigma_2
+    mix = np.einsum("tm,mij->tij", probs, np.stack(results.Sigma_))
+    chols = np.linalg.cholesky(mix)
+
+    def _one(child):
+        rng = np.random.default_rng(child)
+        Ub = np.einsum("tij,tj->ti", chols, rng.standard_normal((T, K)))
+        try:
+            return _b_of(Ub, rows1), _b_of(Ub, rows2)
+        except (np.linalg.LinAlgError, RuntimeError, ValueError):
+            return None
+
+    children = np.random.SeedSequence(random_state).spawn(n_boot)
+    out = [o for o in Parallel(n_jobs=n_jobs)(delayed(_one)(c) for c in children) if o is not None]
+    if len(out) < max(20, K**2 + 1):
+        raise RuntimeError("too few successful bootstrap replications for V[Delta]")
+    D1 = np.array([o[0] for o in out])
+    D2 = np.array([o[1] for o in out])
+
+    W, p, _ = _wald(B1, B2, D1, D2, elements=None, relative=False, center=center)
+    return BStabilityResult(
+        statistic=W,
+        p_value=p,
+        n_boot=len(out),
+        B1=B1,
+        B2=B2,
+        windows=(window_before, window_after),
+        null="gaussian_fixed_probs" + ("" if center else ", uncentred"),
+        centered=center,
+        draws1=D1,
+        draws2=D2,
+    )
 
 
 def b_stability_test(

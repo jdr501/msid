@@ -5,7 +5,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from msid.inference.stability import _pick, _wald, _wild_draw, b_stability_test
+from msid.inference.stability import (
+    _pick,
+    _wald,
+    _weighted_sigmas,
+    _wild_draw,
+    b_stability_test,
+    b_stability_test_fixed_probs,
+)
 
 
 def _synthetic(mu, n=400, sd=0.01, seed=0):
@@ -99,3 +106,62 @@ def test_wild_draw_flips_one_sign_per_date():
     assert np.allclose(np.abs(ratio), 1.0)  # magnitudes preserved
     assert np.allclose(ratio, ratio[:, [0]])  # one sign per date
     assert not np.allclose(ratio, ratio[0, 0])  # signs do vary across dates
+
+
+def test_weighted_sigmas_recovers_the_regime_covariances():
+    """With near-degenerate probabilities the weighted covariance is the group one."""
+    rng = np.random.default_rng(0)
+    n, K = 600, 3
+    A = np.eye(K) + 0.2 * rng.normal(size=(K, K))
+    U = np.vstack([rng.normal(size=(n, K)) @ A.T, 3.0 * rng.normal(size=(n, K)) @ A.T])
+    w = np.zeros((2 * n, 2))
+    w[:n, 0] = 1.0
+    w[n:, 1] = 1.0
+    S1, S2 = _weighted_sigmas(U, w)
+    assert np.allclose(S1, (U[:n].T @ U[:n]) / n)
+    assert np.allclose(S2, (U[n:].T @ U[n:]) / n)
+    # the second group is about 9 times the first
+    assert 6.0 < np.trace(S2) / np.trace(S1) < 13.0
+
+
+def test_uncentred_wald_differs_from_centred_when_the_null_mean_is_nonzero():
+    B1, B2, D1, D2 = _synthetic(0.0, n=200)
+    # shift every draw AND the observed value by the same amount: the null mean
+    # is then far from zero, which is exactly when the two conventions diverge
+    D1 = D1 + 0.5
+    B1 = B1 + 0.5
+    Wc, pc, _ = _wald(B1, B2, D1, D2, None, False, center=True)
+    Wu, pu, _ = _wald(B1, B2, D1, D2, None, False, center=False)
+    assert Wu > Wc
+    assert pc >= 1.0 / (len(D1) + 1) and pu >= 1.0 / (len(D1) + 1)
+
+
+def test_fixed_probs_end_to_end(fitted_example):
+    res = b_stability_test_fixed_probs(
+        fitted_example,
+        "2020-05-01",
+        n_boot=50,
+        min_regime_obs=5,
+        n_jobs=1,
+        random_state=0,
+    )
+    assert res.centered is False
+    assert res.draws1.shape == (res.n_boot, 3, 3)
+    assert 1.0 / (res.n_boot + 1) <= res.p_value <= 1.0
+    W, p, df = res.subtest()
+    assert (W, p, df) == pytest.approx((res.statistic, res.p_value, 9))
+    W31, _, df31 = res.subtest(elements=[(2, 0), (2, 1)])
+    assert df31 == 2 and np.isfinite(W31)
+
+
+def test_fixed_probs_refuses_more_than_two_regimes(fitted_example):
+    class _ThreeRegimes:
+        def __init__(self, inner):
+            self._inner = inner
+            self.M = 3
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    with pytest.raises(ValueError, match="exactly 2 regimes"):
+        b_stability_test_fixed_probs(_ThreeRegimes(fitted_example), "2020-05-01")
