@@ -187,3 +187,43 @@ def test_draft_exact_uses_the_plain_p_value(fitted_example):
     assert np.isclose(res.p_value * res.n_boot, round(res.p_value * res.n_boot))
     W, p, df = res.subtest()
     assert (W, p, df) == pytest.approx((res.statistic, res.p_value, 9))
+
+
+def test_eigenvalue_column_order_matches_the_drafts_convention():
+    """Columns ordered by descending lambda, signs fixed by the largest element."""
+    from msid.inference.stability import _b_eig_sorted
+
+    rng = np.random.default_rng(0)
+    K = 3
+    B = np.eye(K) + 0.3 * rng.normal(size=(K, K))
+    lam = np.array([0.05, 40.0, 3.0])  # deliberately unsorted
+    S1 = B @ B.T
+    S2 = B @ np.diag(lam) @ B.T
+    Bh = _b_eig_sorted(S1, S2)
+    # it reproduces the covariances it was built from
+    assert np.allclose(Bh @ Bh.T, S1)
+    # and the implied lambdas come out in descending order
+    iB = np.linalg.inv(Bh)
+    lam_hat = np.diag(iB @ S2 @ iB.T)
+    assert np.all(np.diff(lam_hat) < 0)
+    assert np.allclose(np.sort(lam_hat)[::-1], np.sort(lam)[::-1])
+    # every column's largest-magnitude element is positive
+    for j in range(K):
+        assert Bh[np.argmax(np.abs(Bh[:, j])), j] > 0
+
+
+def test_fixed_probs_accepts_eigenvalue_order_and_refuses_junk(fitted_example):
+    res = b_stability_test_fixed_probs(
+        fitted_example,
+        "2020-05-01",
+        n_boot=50,
+        min_regime_obs=5,
+        draft_exact=True,
+        column_order="eigenvalue",
+        n_jobs=1,
+        random_state=0,
+    )
+    assert "eigenvalue column order" in res.null
+    assert 0.0 <= res.p_value <= 1.0
+    with pytest.raises(ValueError, match="column_order"):
+        b_stability_test_fixed_probs(fitted_example, "2020-05-01", column_order="nope")

@@ -304,6 +304,31 @@ def _weighted_sigmas(U: np.ndarray, w: np.ndarray, demean: bool = False) -> list
     return out
 
 
+def _b_eig_sorted(S1: np.ndarray, S2: np.ndarray) -> np.ndarray:
+    """B from the pair, columns ordered by DESCENDING generalized eigenvalue.
+
+    The draft's own convention: solve ``S2 v = lambda S1 v`` with ``V' S1 V =
+    I``, order the columns by lambda from largest to smallest, then flip each
+    column so its largest-magnitude element is positive.  No reference matrix is
+    used.  The alternative, :func:`_align_b`, matches each window's B to the
+    full-sample estimate by the closest signed column permutation; the two agree
+    whenever both windows receive the same ordering, and the alignment version
+    is safer when two lambdas are close enough to cross inside a window or a
+    replication.
+    """
+    from scipy import linalg
+
+    lam, V = linalg.eigh(S2, S1)
+    V = V[:, np.argsort(lam)[::-1]]
+    for j in range(V.shape[1]):
+        V[:, j] /= np.sqrt(V[:, j] @ S1 @ V[:, j])
+    B = np.linalg.inv(V.T)
+    for j in range(B.shape[1]):
+        if B[np.argmax(np.abs(B[:, j])), j] < 0:
+            B[:, j] *= -1.0
+    return B
+
+
 def b_stability_test_fixed_probs(
     results,
     center_date,
@@ -315,6 +340,7 @@ def b_stability_test_fixed_probs(
     center: bool = False,
     demean: bool = False,
     draft_exact: bool = False,
+    column_order: str = "align",
     n_jobs: int = -1,
     random_state=None,
 ) -> BStabilityResult:
@@ -340,6 +366,12 @@ def b_stability_test_fixed_probs(
         the draft.  Observed and bootstrap values are treated identically, so
         the p-value is valid; it simply has less power than the centred version
         when the window estimator is biased under the null.
+
+    ``column_order="eigenvalue"`` orders each window's columns by descending
+    generalized eigenvalue and fixes signs by the largest element, which is the
+    draft's own convention; the default ``"align"`` matches each B to the
+    full-sample estimate by the closest signed column permutation instead.  The
+    two give the same statistic whenever both windows receive the same ordering.
 
     ``draft_exact=True`` reproduces the draft's arithmetic to the letter: the
     regime covariances are centred on their own weighted means, V is inverted
@@ -386,11 +418,15 @@ def b_stability_test_fixed_probs(
             )
 
     use_demean = demean or draft_exact
+    if column_order not in ("align", "eigenvalue"):
+        raise ValueError(f'column_order must be "align" or "eigenvalue", got {column_order!r}')
 
     def _b_of(Ux: np.ndarray, rows: np.ndarray) -> np.ndarray:
         from .invariance import _b_from_pair
 
         S1, S2 = _weighted_sigmas(Ux[rows], probs[rows], demean=use_demean)
+        if column_order == "eigenvalue":
+            return _b_eig_sorted(S1, S2)
         return _align_b(_b_from_pair(S1, S2), results.B_)
 
     B1 = _b_of(U, rows1)
@@ -427,6 +463,7 @@ def b_stability_test_fixed_probs(
             "gaussian_fixed_probs"
             + ("" if center else ", uncentred")
             + (", draft arithmetic" if draft_exact else "")
+            + (", eigenvalue column order" if column_order == "eigenvalue" else "")
         ),
         centered=center,
         draft=draft_exact,
