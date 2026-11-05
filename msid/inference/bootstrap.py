@@ -4,12 +4,14 @@ Exactly as in HL (2014, Section 3.2, Eq. 7) and the Tether paper:
 
 1. Conditional on the ML estimates, ``Dy*_t = fitted_t + psi_t u_tilde_t``
    with psi_t i.i.d. Rademacher (+-1 w.p. 0.5), regressors held at their
-   original values (fixed design).  The residuals are leverage-adjusted,
-   ``u_tilde_t = u_hat_t / sqrt(1 - h_tt)`` with h_tt the diagonal of the
-   hat matrix of Z (Davidson and Flachaire, 2008).  Without this the refit
-   projects the flipped residuals onto Z a second time and every draw of B*
-   comes out smaller than B_hat by roughly sqrt(1 - k/T), which slides the
-   whole percentile band below the point estimate.
+   original values (fixed design).  The raw residuals are used, as in HL,
+   unless ``leverage=True`` is passed, which applies the Davidson-Flachaire
+   (2008) correction ``u_tilde_t = u_hat_t / sqrt(1 - h_tt)`` with h_tt the
+   diagonal of the hat matrix of Z.  Without the correction the refit projects
+   the flipped residuals onto Z a second time and every draw of B* comes out
+   smaller than B_hat by roughly sqrt(1 - k/T), which slides the whole
+   percentile band below the point estimate; HL accept that, so it is off by
+   default and the published method is reproduced exactly.
 2. Per replication, theta* and B* are re-estimated by maximizing the
    likelihood **starting from the ML estimates** (warm start), holding
    Lambda_m and P fixed at their ML values -- the relative variances and
@@ -91,8 +93,19 @@ def bootstrap_irf(
     n_jobs: int = -1,
     random_state=None,
     max_iter: int = 100,
+    leverage: bool = False,
 ):
     """Bootstrap IRF draws and percentile bands.
+
+    ``leverage`` controls the Davidson-Flachaire (2008) correction.  HL (2014,
+    Eq. 7) multiply the raw residual vector by the Rademacher sign and nothing
+    else, so ``leverage=False`` is the published method and is the default.
+    ``leverage=True`` divides each residual by ``sqrt(1 - h_tt)`` first, which
+    undoes the shrinkage the fixed-design refit applies when it projects the
+    sign-flipped residuals onto Z a second time.  On a daily sample with
+    k/T = 0.025 the correction moves the median draw of B from 0.98 B_hat to
+    1.00 B_hat and widens the bands by about six percent, so it is the more
+    conservative choice -- but it is an addition to HL, not part of it.
 
     Returns
     -------
@@ -100,7 +113,8 @@ def bootstrap_irf(
     IRF array (so users can compute other quantiles), lo/hi the percentile
     bands at level ``ci``.
     """
-    scale = _leverage_scale(results._Z)
+    scale = (_leverage_scale(results._Z) if leverage
+             else np.ones(results._Z.shape[0]))
     ss = np.random.SeedSequence(random_state)
     children = ss.spawn(n_boot)
     out = Parallel(n_jobs=n_jobs)(

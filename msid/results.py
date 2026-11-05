@@ -108,10 +108,13 @@ class _ResultsBase:
         cumulate: str = "levels",
         n_jobs: int = -1,
         random_state=None,
+        leverage: bool = False,
     ):
         """Structural IRFs with fixed-design wild bootstrap bands (spec 9).
 
-        Set ``n_boot=0`` for point estimates only.
+        Set ``n_boot=0`` for point estimates only.  ``leverage`` turns the
+        Davidson-Flachaire residual correction on; the default False matches
+        HL (2014, Eq. 7), which uses the raw residuals.
         """
         from .inference.bootstrap import bootstrap_irf
         from .irf import IRFResults, point_irf
@@ -127,6 +130,7 @@ class _ResultsBase:
                 cumulate=cumulate,
                 n_jobs=n_jobs,
                 random_state=random_state,
+                leverage=leverage,
             )
             return IRFResults(irfs=irfs, var_names=names, lo=lo, hi=hi, draws=draws, ci=ci)
         return IRFResults(irfs=irfs, var_names=names)
